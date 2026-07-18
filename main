@@ -1,0 +1,216 @@
+import discord
+from discord.ext import commands
+from discord import app_commands
+import datetime
+import requests
+import os
+
+# Importujeme kód pro tikety a web server
+from keep_alive import keep_alive
+from ticket_system import TicketView
+
+# --- KONFIGURACE ---
+FIVEM_CFX_CODE = "ZDE_VLOZ_SVOJ_CFX_KOD"  # Sem dej svůj kód z cfx.re URL (např. "abc123")import discordfrom flask import Flask
+from threading import Thread
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot je online na Discloudu!"
+
+def run():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+import datetime
+
+# Tvoje ID rolí z Discordu
+ROLE_CEO = 1524479004407496854
+ROLE_MANAGEMENT = 1524479083017273507
+ROLE_STAFF_KOORDINATOR = 1524480187859865691
+ROLE_STAFF = 1524662952794259497
+ROLE_ZAUČUJÍCÍ_STAFF = 1524480897179451412
+
+class TicketDropdown(discord.ui.Select):
+    def __init__(self):
+        options = [
+            discord.SelectOption(label="Stížnost na hráče", emoji="⚠️", description="Nahlášení porušení pravidel."),
+            discord.SelectOption(label="Stížnost na IZS", emoji="🚒", description="Stížnosti týkající se složek IZS."),
+            discord.SelectOption(label="Kontakt na vedení", emoji="👑", description="Záležitosti přímo pro majitele/vedení."),
+            discord.SelectOption(label="Stav spolupráce", emoji="🤝", description="Partnerské projekty a spolupráce."),
+            discord.SelectOption(label="Přihláška do IZS", emoji="📝", description="Chceš se přidat k policii nebo záchranářům?"),
+            discord.SelectOption(label="Obecná otázka", emoji="💬", description="Máš dotaz k serveru?"),
+            discord.SelectOption(label="Interní záležitosti", emoji="🔒", description="Záležitosti určené pro interní tým.")
+        ]
+        super().__init__(placeholder="Vyber si kategorii tvého problému...", min_values=1, max_values=1, options=options, custom_id="ticket_select")
+
+    async def callback(self, interaction: discord.Interaction):
+        # Kontrola času: Pondělí (0) až Pátek (4), od 7:00
+        now = datetime.datetime.now()
+        day = now.weekday()  
+        hour = now.hour
+
+        if day > 4 or hour < 7:
+            await interaction.response.send_message(
+                "❌ Tikety jsou otevřeny pouze od **Pondělí do Pátku od 7:00** ráno!", 
+                ephemeral=True
+            )
+            return
+
+        category_name = self.values[0]
+        guild = interaction.guild
+        user = interaction.user
+
+        # Výchozí zámek (nikdo kromě autora ticketu a bota kanál neuvidí)
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        }
+
+        # Rozdělení přístupů podle tvých požadavků
+        allowed_role_ids = []
+
+        if category_name == "Stížnost na hráče":
+            allowed_role_ids = [ROLE_CEO, ROLE_MANAGEMENT, ROLE_STAFF_KOORDINATOR, ROLE_STAFF, ROLE_ZAUČUJÍCÍ_STAFF]
+        elif category_name == "Stížnost na IZS":
+            allowed_role_ids = [ROLE_CEO, ROLE_MANAGEMENT, ROLE_STAFF_KOORDINATOR, ROLE_STAFF]
+        elif category_name == "Kontakt na vedení":
+            allowed_role_ids = [ROLE_CEO, ROLE_MANAGEMENT]
+        elif category_name == "Stav spolupráce":
+            allowed_role_ids = [ROLE_CEO, ROLE_MANAGEMENT, ROLE_STAFF_KOORDINATOR]
+        elif category_name == "Přihláška do IZS":
+            allowed_role_ids = [ROLE_CEO, ROLE_MANAGEMENT, ROLE_STAFF_KOORDINATOR, ROLE_STAFF, ROLE_ZAUČUJÍCÍ_STAFF]
+        elif category_name == "Obecná otázka":
+            allowed_role_ids = [ROLE_CEO, ROLE_MANAGEMENT, ROLE_STAFF_KOORDINATOR, ROLE_STAFF, ROLE_ZAUČUJÍCÍ_STAFF]
+        elif category_name == "Interní záležitosti":
+            allowed_role_ids = [ROLE_CEO, ROLE_MANAGEMENT, ROLE_STAFF_KOORDINATOR]
+
+        # Přidání práv vybraným rolím
+        for role_id in allowed_role_ids:
+            role = guild.get_role(role_id)
+            if role:
+                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True)
+
+        ticket_channel_name = f"ticket-{category_name.lower().replace(' ', '-')}-{user.name}"
+        channel = await guild.create_text_channel(name=ticket_channel_name, overwrites=overwrites)
+
+        embed = discord.Embed(
+            title=f"🎫 Ticket - {category_name}",
+            description=f"Ahoj {user.mention}, vítej ve svém ticketu!\n\nNapiš nám podrobnosti. Administrátoři se ti budou brzy věnovat.",
+            color=discord.Color.blue()
+        )
+        
+        close_button = discord.ui.Button(label="Zavřít Ticket", style=discord.ButtonStyle.red, custom_id="close_ticket")
+        
+        async def close_callback(button_interaction: discord.Interaction):
+            await button_interaction.response.send_message("Kanál bude smazán za 5 sekund...")
+            await discord.utils.sleep_until(datetime.datetime.now() + datetime.timedelta(seconds=5))
+            await channel.delete()
+
+        close_button.callback = close_callback
+        view = discord.ui.View()
+        view.add_item(close_button)
+
+        await channel.send(embed=embed, view=view)
+        await interaction.response.send_message(f"Tvůj ticket byl vytvořen: {channel.mention}", ephemeral=True)
+
+class TicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(TicketDropdown())
+ANTI_RAID_MIN_AGE_DAYS = 3  # Minimální věk účtu (ve dnech) pro vstup na server
+
+class Bot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.members = True  # Nutné mít zapnuté v Discord Developer Portálu!
+        super().__init__(command_prefix="!", intents=intents)
+
+    async def setup_hook(self):
+        await self.tree.sync()
+        self.add_view(TicketView())
+
+bot = Bot()
+
+# Spuštění webu na pozadí
+keep_alive()
+
+# --- FUNKCE PRO FIVEM STATUS ---
+def get_fivem_status(cfx_code):
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    try:
+        url = f"https://servers-frontend.fivem.net/api/servers/single/{cfx_code}"
+        response = requests.get(url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            players_count = len(data['Data']['players'])
+            max_players = data['Data']['vars']['sv_maxclients']
+            server_name = data['Data']['hostname']
+            return True, players_count, max_players, server_name
+    except Exception:
+        pass
+    return False, 0, 0, ""
+
+# --- SLASH PŘÍKAZY ---
+
+@bot.tree.command(name="setup", description="Vytvoří ticketovací panel v tomto kanálu.")
+@app_commands.checks.has_permissions(administrator=True)
+async def setup_tickets(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🎫 Centrum Podpory & Ticketů",
+        description=(
+            "Potřebuješ pomoct, nahlásit hráče nebo kontaktovat vedení?\n"
+            "Vyber si příslušnou kategorii z menu níže.\n\n"
+            "⚠️ **Provozní doba:** Pondělí - Pátek (od 07:00)."
+        ),
+        color=discord.Color.green()
+    )
+    embed.set_thumbnail(url="https://images.cfx.re/thumbnails/fivem.png")
+    
+    await interaction.response.send_message("Panel byl úspěšně vytvořen!", ephemeral=True)
+    await interaction.channel.send(embed=embed, view=TicketView())
+
+@bot.tree.command(name="status", description="Zobrazí aktuální stav FiveM serveru.")
+async def fivem_status(interaction: discord.Interaction):
+    await interaction.response.defer()
+    online, players, max_players, name = get_fivem_status(FIVEM_CFX_CODE)
+    
+    if online:
+        embed = discord.Embed(
+            title="🟢 Server je ONLINE!",
+            description=f"**Název:** {name[:100]}...\n**Hráči:** `{players} / {max_players}`",
+            color=discord.Color.green()
+        )
+    else:
+        embed = discord.Embed(
+            title="🔴 Server je OFFLINE!",
+            description="Nepodařilo se připojit k serveru. Zkontroluj, zda běží.",
+            color=discord.Color.red()
+        )
+    await interaction.followup.send(embed=embed)
+
+# --- ANTI-RAID OCHRANA ---
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    now = datetime.datetime.now(datetime.timezone.utc)
+    account_age = now - member.created_at
+
+    if account_age.days < ANTI_RAID_MIN_AGE_DAYS:
+        try:
+            await member.send(
+                f"❌ Byl jsi automaticky vyhozen ze serveru **{member.guild.name}**.\n"
+                f"Důvod: Tvůj účet na Discordu je příliš nový ({account_age.days} dní). "
+                f"Ochrana vyžaduje věk účtu alespoň {ANTI_RAID_MIN_AGE_DAYS} dny."
+            )
+        except Exception:
+            pass
+        await member.kick(reason=f"Anti-Raid: Nový účet ({account_age.days} dní).")
+
+# Spuštění přes token z proměnných
+bot.run(os.environ.get('DISCORD_TOKEN'))
